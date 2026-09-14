@@ -1,53 +1,38 @@
-# Migration Guide: v1.x to v2.0
+# Migration Guide: jxp-helper v2 to v3
 
 ## Overview
 
-JXP Helper v2.0 introduces full TypeScript support while maintaining backward compatibility with JavaScript projects. This guide will help you migrate from v1.x to v2.0.
+JXP Helper v3 removes axios and sends API keys in the `X-API-Key` header. It targets Node.js 22 or later and is intended for JXP 6.
 
 ## Breaking Changes
 
-### 1. Main Entry Point
-- **v1.x**: `jxp-helper.js`
-- **v2.0**: `dist/index.js` (built from TypeScript)
-
-The package.json automatically handles this change, so no code changes are required.
-
-### 2. Constructor Requirements
-Both `server` and `apikey` are now required parameters:
+### 1. API key transport
+The constructor remains the same:
 
 ```javascript
-// v1.x - apikey was optional in some cases
-const helper = new JXPHelper({ server: "http://localhost:2001" });
-
-// v2.0 - both server and apikey are required
 const helper = new JXPHelper({ 
   server: "http://localhost:2001", 
   apikey: "your-api-key" 
 });
 ```
 
-### 3. Error Handling
-Error handling is now more consistent and type-safe:
+Every request now sends `X-API-Key: your-api-key` and never appends `?apikey=` to a URL.
+
+### 2. Error handling
+
+Errors are now typed:
 
 ```javascript
-// v1.x - inconsistent error formats
 try {
   const result = await helper.get('users');
 } catch (err) {
-  // err could be various formats
-}
-
-// v2.0 - consistent error handling
-try {
-  const result = await helper.get('users');
-} catch (err) {
-  // err.response.data contains the error details
+  // err is a JXPError with status, body, url, and method
 }
 ```
 
 ## New Features
 
-### 1. TypeScript Support
+### 1. Native fetch
 Full TypeScript definitions are now included:
 
 ```typescript
@@ -82,7 +67,7 @@ const articles = await helper.get<Article>('articles', { limit: 10 });
 ### 3. Enhanced IntelliSense
 IDEs now provide better autocomplete and error detection.
 
-## Migration Steps
+## Migration steps
 
 ### For JavaScript Projects
 
@@ -90,12 +75,12 @@ IDEs now provide better autocomplete and error detection.
    ```json
    {
      "dependencies": {
-       "jxp-helper": "^2.0.0"
+      "jxp-helper": "^3.0.0"
      }
    }
    ```
 
-2. **Update constructor calls** to include apikey:
+2. **Update constructor calls** to include the API key:
    ```javascript
    const helper = new JXPHelper({ 
      server: "http://localhost:2001", 
@@ -103,7 +88,7 @@ IDEs now provide better autocomplete and error detection.
    });
    ```
 
-3. **Test your application** - most existing code should work without changes.
+3. **Remove any code that reads `err.response.data`** and use `err.body`.
 
 ### For TypeScript Projects
 
@@ -125,13 +110,13 @@ IDEs now provide better autocomplete and error detection.
 
 ## Compatibility
 
-- **Node.js**: Requires Node.js 14.0.0 or higher
-- **JavaScript**: Fully backward compatible (with constructor changes)
+- **Node.js**: Requires Node.js 22.0.0 or higher
+- **JavaScript**: CommonJS and ESM are supported
 - **TypeScript**: Full support with type definitions
 - **ES Modules**: Supported
 - **CommonJS**: Supported
 
-## Development Changes
+## Development changes
 
 If you're contributing to the project:
 

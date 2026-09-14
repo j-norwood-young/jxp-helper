@@ -1,13 +1,13 @@
-import { AxiosResponse } from 'axios';
-
 /**
  * Configuration options for JXPHelper
  */
 export interface JXPHelperOptions {
   /** The server URL */
   server: string;
-  /** The API key for authentication */
-  apikey: string;
+  /** The API key sent in the X-API-Key header */
+  apikey?: string;
+  /** The bearer token sent in the Authorization header */
+  token?: string;
   /** Whether to enable debug mode */
   debug?: boolean;
   /** Whether to hide errors */
@@ -91,7 +91,9 @@ export interface CountResponse {
  * JWT response structure
  */
 export interface JWTResponse {
-  jwt: string;
+  jwt?: string;
+  token?: string;
+  token_expires?: string;
   [key: string]: any;
 }
 

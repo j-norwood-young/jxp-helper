@@ -1,4 +1,3 @@
-import axios, { AxiosResponse, AxiosError } from 'axios';
 import {
   JXPHelperOptions,
   LoginResponse,
@@ -12,13 +11,16 @@ import {
   ModelDefinition,
   GroupData
 } from './types';
+import { jxpRequest } from './http';
+import { JXPError } from './errors';
 
 /**
  * JXPHelper class for interacting with a JXP server.
  */
 export class JXPHelper {
   public server!: string;
-  public apikey!: string;
+  public apikey?: string;
+  public token?: string;
   public api!: string;
   public debug!: boolean;
   public hideErrors!: boolean;
@@ -35,6 +37,7 @@ export class JXPHelper {
     const config = Object.assign({}, defaults, opts);
     this.config(config);
     if (!this.server) throw new Error("parameter 'server' required");
+    if (!this.apikey && !this.token) throw new Error("parameter 'apikey' or 'token' required");
     this.api = this.server + "/api";
   }
 
@@ -51,9 +54,9 @@ export class JXPHelper {
   }
   
   private _configParams(opts: QueryOptions = {}): string {
-    opts.apikey = this.apikey;
     const parts: string[] = [];
     for (const opt in opts) {
+      if (['apikey', 'api_key', 'apiKey', 'x-api-key'].includes(opt.toLowerCase())) continue;
       if (Array.isArray(opts[opt])) {
         (opts[opt] as (string | number)[]).forEach(val => {
           parts.push(opt + "=" + encodeURIComponent(val.toString()));
@@ -69,19 +72,26 @@ export class JXPHelper {
     return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
   }
 
-  private _displayError(err: AxiosError): void {
+  private _displayError(err: unknown): void {
     try {
       if (this.hideErrors) return;
-      const config = err.config;
-      const response = err.response;
-      console.error(`${new Date().toISOString()}\turl: ${config?.url}\tmethod: ${config?.method}\tstatus: ${response?.status}\tstatusText: ${response?.statusText}\tdata: ${(response?.data) ? JSON.stringify(response.data) : 'No data'}`);
+      if (err instanceof JXPError) {
+        console.error(`${new Date().toISOString()}\turl: ${err.url}\tmethod: ${err.method}\tstatus: ${err.status}\tstatusText: ${err.statusText}\tdata: ${err.body ? JSON.stringify(err.body) : 'No data'}`);
+      } else {
+        console.error(err);
+      }
     } catch (error) {
       console.error(error);
     }
   }
 
+  private _request<T>(url: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
+    return jxpRequest<T>(url, this.apikey, this.token, options);
+  }
+
   url(type: string, opts?: QueryOptions, ep: string = "api"): string {
-    return `${this.server}/${ep}/${type}?${this._configParams(opts)}`;
+    const params = this._configParams(opts);
+    return `${this.server}/${ep}/${type}${params ? `?${params}` : ''}`;
   }
 
   /**
@@ -92,11 +102,11 @@ export class JXPHelper {
    */
   async login(email: string, password: string): Promise<LoginResponse | any> {
     try {
-      const data: LoginData = (await axios.post(`${this.server}/login`, { email, password })).data;
-      const user: UserData = (await axios.get(`${this.api}/user/${data.user_id}?apikey=${this.apikey}`)).data;
+      const data = await this._request<LoginData>(`${this.server}/login`, { method: 'POST', body: { email, password } });
+      const user = await this._request<UserData>(`${this.api}/user/${data.user_id}`);
       return { data, user };
     } catch (err: any) {
-      return err.response?.data;
+      return err instanceof JXPError ? err.body : err;
     }
   }
 
@@ -113,16 +123,13 @@ export class JXPHelper {
     if (this.debug) console.time(label);
     const url = `${this.api}/${type}/${id}?${this._configParams(opts)}`;
     try {
-      const result: AxiosResponse<T> = await axios.get(url);
+      const result = await this._request<T>(url);
       if (this.debug) console.timeEnd(label);
-      if (result.status !== 200) {
-        throw new Error(result.statusText);
-      }
-      return result.data;
+      return result;
     } catch (err: any) {
       if (this.debug) console.timeEnd(label);
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -138,16 +145,13 @@ export class JXPHelper {
     if (this.debug) console.time(label);
     const url = this.url(type, opts);
     try {
-      const result: AxiosResponse<ApiResponse<T>> = await axios.get(url);
+      const result = await this._request<ApiResponse<T>>(url);
       if (this.debug) console.timeEnd(label);
-      if (result.status !== 200) {
-        throw new Error(result.statusText);
-      }
-      return result.data;
+      return result;
     } catch (err: any) {
       if (this.debug) console.timeEnd(label);
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -163,16 +167,13 @@ export class JXPHelper {
     if (this.debug) console.time(label);
     const url = `${this.server}/csv/${type}?${this._configParams(opts)}`;
     try {
-      const result: AxiosResponse<string> = await axios.get(url);
+      const result = await this._request<string>(url);
       if (this.debug) console.timeEnd(label);
-      if (result.status !== 200) {
-        throw new Error(result.statusText);
-      }
-      return result.data;
+      return result;
     } catch (err: any) {
       if (this.debug) console.timeEnd(label);
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -189,16 +190,13 @@ export class JXPHelper {
     if (this.debug) console.time(label);
     const url = `${this.server}/query/${type}?${this._configParams(opts)}`;
     try {
-      const result: AxiosResponse<T> = await axios.post(url, { query });
+      const result = await this._request<T>(url, { method: 'POST', body: { query } });
       if (this.debug) console.timeEnd(label);
-      if (result.status !== 200) {
-        throw new Error(result.statusText);
-      }
-      return result.data;
+      return result;
     } catch (err: any) {
       if (this.debug) console.timeEnd(label);
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -215,16 +213,13 @@ export class JXPHelper {
     if (this.debug) console.time(label);
     const url = `${this.server}/aggregate/${type}?${this._configParams(opts)}`;
     try {
-      const result: AxiosResponse<T> = await axios.post(url, { query });
+      const result = await this._request<T>(url, { method: 'POST', body: { query } });
       if (this.debug) console.timeEnd(label);
-      if (result.status !== 200) {
-        throw new Error(result.statusText);
-      }
-      return result.data;
+      return result;
     } catch (err: any) {
       if (this.debug) console.timeEnd(label);
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -258,11 +253,11 @@ export class JXPHelper {
         }
         return updateQuery;
       });
-      const url = `${this.server}/bulkwrite/${type}?apikey=${this.apikey}`;
-      return (await axios.post(url, updates)).data;
+      const url = `${this.server}/bulkwrite/${type}`;
+      return await this._request(url, { method: 'POST', body: updates });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -287,11 +282,11 @@ export class JXPHelper {
         updateQuery.updateOne!.filter[key] = (item as any)[key];
         return updateQuery;
       });
-      const url = `${this.server}/bulkwrite/${type}?apikey=${this.apikey}`;
-      return (await axios.post(url, updates)).data;
+      const url = `${this.server}/bulkwrite/${type}`;
+      return await this._request(url, { method: 'POST', body: updates });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -311,11 +306,11 @@ export class JXPHelper {
           }
         };
       });
-      const url = `${this.server}/bulkwrite/${type}?apikey=${this.apikey}`;
-      return (await axios.post(url, updates)).data;
+      const url = `${this.server}/bulkwrite/${type}`;
+      return await this._request(url, { method: 'POST', body: updates });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -329,11 +324,11 @@ export class JXPHelper {
   async bulk(type: string, query: BulkWriteOperation[]): Promise<any> {
     try {
       if (this.debug) console.log("bulk", type);
-      const url = `${this.server}/bulkwrite/${type}?apikey=${this.apikey}`;
-      return (await axios.post(url, query)).data;
+      const url = `${this.server}/bulkwrite/${type}`;
+      return await this._request(url, { method: 'POST', body: query });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -356,11 +351,11 @@ export class JXPHelper {
           },
         }
       ];
-      const url = `${this.server}/bulkwrite/${type}?apikey=${this.apikey}`;
-      return (await axios.post(url, query)).data;
+      const url = `${this.server}/bulkwrite/${type}`;
+      return await this._request(url, { method: 'POST', body: query });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -377,16 +372,13 @@ export class JXPHelper {
     options.limit = 1;
     const url = this.url(type, options, "count");
     try {
-      const result: AxiosResponse<CountResponse> = await axios.get(url);
+      const result = await this._request<CountResponse>(url);
       if (this.debug) console.timeEnd(label);
-      if (result.status !== 200) {
-        throw new Error(result.statusText);
-      }
-      return result.data.count;
+      return result.count;
     } catch (err: any) {
       if (this.debug) console.timeEnd(label);
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -397,13 +389,13 @@ export class JXPHelper {
    * @returns The response data from the post operation.
    */
   async post<T = any>(type: string, data: T): Promise<any> {
-    const url = `${this.api}/${type}?apikey=${this.apikey}`;
+    const url = `${this.api}/${type}`;
     if (this.debug) console.log("POSTing to ", url, data);
     try {
-      return (await axios.post(url, data)).data;
+      return await this._request(url, { method: 'POST', body: data });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -416,13 +408,13 @@ export class JXPHelper {
    * @throws If an error occurs during the request.
    */
   async put<T = any>(type: string, id: string, data: T): Promise<any> {
-    const url = `${this.api}/${type}/${id}?apikey=${this.apikey}`;
+    const url = `${this.api}/${type}/${id}`;
     if (this.debug) console.log("PUTting to ", url, data);
     try {
-      return (await axios.put(url, data)).data;
+      return await this._request(url, { method: 'PUT', body: data });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -449,7 +441,7 @@ export class JXPHelper {
       }
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
   
@@ -461,12 +453,12 @@ export class JXPHelper {
    * @throws If an error occurs during the deletion process.
    */
   async del(type: string, id: string): Promise<any> {
-    const url = `${this.api}/${type}/${id}?apikey=${this.apikey}`;
+    const url = `${this.api}/${type}/${id}`;
     try {
-      return (await axios.delete(url)).data;
+      return await this._request(url, { method: 'DELETE' });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -478,12 +470,12 @@ export class JXPHelper {
    * @throws If an error occurs during the deletion process.
    */
   async del_perm(type: string, id: string): Promise<any> {
-    const url = `${this.api}/${type}/${id}?_permaDelete=1&apikey=${this.apikey}`;
+    const url = `${this.api}/${type}/${id}?_permaDelete=1`;
     try {
-      return (await axios.delete(url)).data;
+      return await this._request(url, { method: 'DELETE' });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -495,12 +487,12 @@ export class JXPHelper {
    * @throws If an error occurs during the deletion process.
    */
   async del_cascade(type: string, id: string): Promise<any> {
-    const url = `${this.api}/${type}/${id}?_cascade=1&apikey=${this.apikey}`;
+    const url = `${this.api}/${type}/${id}?_cascade=1`;
     try {
-      return (await axios.delete(url)).data;
+      return await this._request(url, { method: 'DELETE' });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -512,12 +504,12 @@ export class JXPHelper {
    * @throws If an error occurs during the delete request.
    */
   async del_perm_cascade(type: string, id: string): Promise<any> {
-    const url = `${this.api}/${type}/${id}?_cascade=1&_permaDelete=1&apikey=${this.apikey}`;
+    const url = `${this.api}/${type}/${id}?_cascade=1&_permaDelete=1`;
     try {
-      return (await axios.delete(url)).data;
+      return await this._request(url, { method: 'DELETE' });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -541,7 +533,7 @@ export class JXPHelper {
       return results;
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -575,7 +567,7 @@ export class JXPHelper {
       return results;
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -589,12 +581,12 @@ export class JXPHelper {
    */
   async call<T = any>(type: string, cmd: string, data: any): Promise<T> {
     //Call a function in the model
-    const url = `${this.server}/call/${type}/${cmd}?apikey=${this.apikey}`;
+    const url = `${this.server}/call/${type}/${cmd}`;
     if (this.debug) console.log("CALLing  ", url, data);
     try {
-      return (await axios.post(url, data)).data;
+      return await this._request<T>(url, { method: 'POST', body: data });
     } catch (err: any) {
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -606,11 +598,11 @@ export class JXPHelper {
    * @throws If an error occurs during the update.
    */
   async groups_put(user_id: string, groups: string[]): Promise<any> {
-    const url = `${this.server}/groups/${user_id}?apikey=${this.apikey}`;
+    const url = `${this.server}/groups/${user_id}`;
     try {
-      return (await axios.put(url, { group: groups })).data;
+      return await this._request(url, { method: 'PUT', body: { group: groups } });
     } catch (err: any) {
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -622,12 +614,12 @@ export class JXPHelper {
    * @throws If an error occurs during the deletion process.
    */
   async groups_del(user_id: string, group: string): Promise<any> {
-    const url = `${this.server}/groups/${user_id}?group=${group}&apikey=${this.apikey}`;
+    const url = `${this.server}/groups/${user_id}?group=${encodeURIComponent(group)}`;
     try {
-      return (await axios.delete(url)).data;
+      return await this._request(url, { method: 'DELETE' });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -639,14 +631,14 @@ export class JXPHelper {
    * @throws If an error occurs during the post request.
    */
   async groups_post(user_id: string, groups: string[]): Promise<any> {
-    const url = `${this.server}/groups/${user_id}?apikey=${this.apikey}`;
+    const url = `${this.server}/groups/${user_id}`;
     const data: GroupData = { group: groups };
     if (this.debug) console.log("GROUP POSTing", url, data);
     try {
-      return (await axios.post(url, data)).data;
+      return await this._request(url, { method: 'POST', body: data });
     } catch (err: any) {
       this._displayError(err);
-      throw (err.response ? err.response.data : err);
+      throw err;
     }
   }
 
@@ -658,11 +650,10 @@ export class JXPHelper {
    */
   async getjwt(email: string): Promise<JWTResponse> {
     try {
-      const jwt: JWTResponse = (await axios.post(`${this.server}/login/getjwt?apikey=${this.apikey}`, { email })).data;
-      return jwt;
+      return await this._request<JWTResponse>(`${this.server}/login/getjwt`, { method: 'POST', body: { email } });
     } catch (err: any) {
-      if (err.response && err.response.data)
-        return Promise.reject(err.response.data);
+      if (err instanceof JXPError)
+        return Promise.reject(err.body);
       return Promise.reject(err);
     }
   }
@@ -675,11 +666,10 @@ export class JXPHelper {
    */
   async model(modelname: string): Promise<ModelDefinition> {
     try {
-      const modeldef: ModelDefinition = (await axios.get(`${this.server}/model/${modelname}?apikey=${this.apikey}`)).data;
-      return modeldef;
+      return await this._request<ModelDefinition>(`${this.server}/model/${modelname}`);
     } catch (err: any) {
-      if (err.response && err.response.data)
-        return Promise.reject(err.response.data);
+      if (err instanceof JXPError)
+        return Promise.reject(err.body);
       return Promise.reject(err);
     }
   }
@@ -691,11 +681,10 @@ export class JXPHelper {
    */
   async models(): Promise<ModelDefinition[]> {
     try {
-      const modeldef: ModelDefinition[] = (await axios.get(`${this.server}/model?apikey=${this.apikey}`)).data;
-      return modeldef;
+      return await this._request<ModelDefinition[]>(`${this.server}/model`);
     } catch (err: any) {
-      if (err.response && err.response.data)
-        return Promise.reject(err.response.data);
+      if (err instanceof JXPError)
+        return Promise.reject(err.body);
       return Promise.reject(err);
     }
   }
