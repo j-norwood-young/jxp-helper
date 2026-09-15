@@ -13,8 +13,9 @@ export async function jxpRequest<T>(
   options: RequestOptions = {}
 ): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' };
-  if (apiKey) headers['X-API-Key'] = apiKey;
-  if (!apiKey && bearerToken) headers.Authorization = `Bearer ${bearerToken}`;
+  // Prefer bearer access tokens when both are present (post-login session).
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`;
+  else if (apiKey) headers['X-API-Key'] = apiKey;
 
   let body: string | undefined;
   if (options.body !== undefined) {

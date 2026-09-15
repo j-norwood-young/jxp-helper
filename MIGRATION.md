@@ -125,11 +125,19 @@ If you're contributing to the project:
 3. **Development**: Use `npm run dev` for watch mode
 4. **Distribution**: Only `dist/` files are published to npm
 
+## v3.1 — Bearer sessions and MFA
+
+- `token` constructor option sends `Authorization: Bearer` (preferred over `apikey` when both are set).
+- Constructor no longer requires credentials (needed for password / MFA login).
+- `login()` may return `{ status: "mfa_required", challenge, methods }` — use `isMfaRequired()` and `completeMfa()`.
+- `refresh(refreshToken)` exchanges a refresh token for a new pair.
+- Login no longer returns API keys; use the bearer `token` from the response.
+
 ## Need Help?
 
 If you encounter issues during migration:
 
-1. Check that both `server` and `apikey` are provided in the constructor
-2. Ensure you're using Node.js 14.0.0 or higher
+1. Provide `apikey` (machine) or `token` (user session) for `/api/*` calls
+2. Ensure you're using Node.js 22.0.0 or higher
 3. For TypeScript projects, make sure your tsconfig.json includes proper module resolution
 4. Open an issue on GitHub if you need assistance

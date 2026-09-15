@@ -1,6 +1,6 @@
 {
   "name": "jxp-helper",
-  "version": "3.0.0",
+  "version": "3.2.0",
   "description": "A bunch of helpful functions for talking to a JXP API server ",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -22,7 +22,8 @@
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
     "prepublishOnly": "npm run build",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include='dist/{errors,http,jxp-helper,types}.js' test/*.test.mjs"
   },
   "repository": {
     "type": "git",

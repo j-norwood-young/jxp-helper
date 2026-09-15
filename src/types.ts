@@ -1,12 +1,16 @@
 /**
- * Configuration options for JXPHelper
+ * Configuration options for JXPHelper.
+ *
+ * Provide at least one of `apikey` (X-API-Key) or `token` (Authorization: Bearer).
+ * Login / MFA / refresh endpoints can also be called with neither when using the
+ * dedicated auth helpers, but authenticated `/api/*` calls require credentials.
  */
 export interface JXPHelperOptions {
   /** The server URL */
   server: string;
-  /** The API key sent in the X-API-Key header */
+  /** Long-lived API key sent in the X-API-Key header (machine credentials) */
   apikey?: string;
-  /** The bearer token sent in the Authorization header */
+  /** Ephemeral access token sent as Authorization: Bearer (from /login or /login/mfa) */
   token?: string;
   /** Whether to enable debug mode */
   debug?: boolean;
@@ -14,13 +18,34 @@ export interface JXPHelperOptions {
   hideErrors?: boolean;
 }
 
-/**
- * Login response data
- */
-export interface LoginData {
+/** Successful password / MFA / refresh login payload from JXP. */
+export interface TokenPair {
   user_id: string;
-  [key: string]: any;
+  token: string;
+  token_expires?: string;
+  refresh_token?: string;
+  refresh_token_expires?: string;
+  provider?: string;
+  [key: string]: unknown;
 }
+
+/** Password step succeeded but TOTP is required. */
+export interface MfaRequiredResponse {
+  status: 'mfa_required';
+  challenge: string;
+  methods: string[];
+}
+
+export type LoginStepResult = TokenPair | MfaRequiredResponse;
+
+export function isMfaRequired(result: LoginStepResult): result is MfaRequiredResponse {
+  return (result as MfaRequiredResponse)?.status === 'mfa_required';
+}
+
+/**
+ * @deprecated Prefer TokenPair. Kept for callers that expected LoginData.
+ */
+export type LoginData = TokenPair;
 
 /**
  * User data structure
@@ -32,10 +57,10 @@ export interface UserData {
 }
 
 /**
- * Login response structure
+ * Login response structure (token pair + hydrated user).
  */
 export interface LoginResponse {
-  data: LoginData;
+  data: TokenPair;
   user: UserData;
 }
 
@@ -74,10 +99,21 @@ export interface BulkWriteOperation {
 }
 
 /**
- * Query options for API requests
+ * Query options for API requests.
+ * Nested objects expand to bracket keys (e.g. `{ filter: { name: 'a' } }` → `filter[name]=a`).
+ * `filters` (plural) is an alias for `filter[...]`. Nullish and empty-string values are omitted.
  */
+export type QueryOptionValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | QueryOptionValue[]
+  | { [key: string]: QueryOptionValue };
+
 export interface QueryOptions {
-  [key: string]: string | number | boolean | string[] | number[];
+  [key: string]: QueryOptionValue;
 }
 
 /**

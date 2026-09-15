@@ -1,8 +1,8 @@
 # JXP Helper
 
-A bunch of helpers to make it easier to read, write, delete and do other cool stuff with the [JXP API server](https://github.com/j-norwood-young/jexpress-2)
+Helpers for reading, writing, and calling a [JXP](https://github.com/WorkSpaceMan/jxp) API server.
 
-**Now with full TypeScript support!** 🎉
+Targets **JXP 6** (bearer tokens + X-API-Key, MFA / TOTP login). Requires **Node.js 22+**.
 
 ## Installation
 
@@ -10,86 +10,97 @@ A bunch of helpers to make it easier to read, write, delete and do other cool st
 npm install --save jxp-helper
 ```
 
-## Usage
+## Authentication
 
-### TypeScript
+JXP supports two client credentials:
+
+| Option | Header | Use |
+| --- | --- | --- |
+| `apikey` | `X-API-Key` | Long-lived machine / system keys |
+| `token` | `Authorization: Bearer …` | Ephemeral access tokens from `/login` or `/login/mfa` |
+
+Provide at least one for `/api/*` calls. Auth endpoints (`login`, `completeMfa`, `refresh`) work with neither.
+
+When both are set, the **bearer token wins**.
 
 ```typescript
-import JXPHelper from 'jxp-helper';
-// or
-import { JXPHelper } from 'jxp-helper';
+import { JXPHelper, isMfaRequired } from 'jxp-helper';
 
-const apihelper = new JXPHelper({ 
-  server: "http://localhost:2001", 
-  apikey: "your-api-key" 
+// System / machine client
+const system = new JXPHelper({
+  server: 'http://localhost:4001',
+  apikey: process.env.JXP_API_KEY!
+});
+
+// User session client (after login)
+const user = new JXPHelper({
+  server: 'http://localhost:4001',
+  token: accessToken
 });
 ```
 
-### JavaScript (CommonJS)
+### Login + MFA (TOTP)
 
-```javascript
-const JXPHelper = require("jxp-helper");
-const apihelper = new JXPHelper({ 
-  server: "http://localhost:2001", 
-  apikey: "your-api-key" 
-});
+```typescript
+const api = new JXPHelper({ server: 'http://localhost:4001' });
+
+const step1 = await api.login(email, password);
+if (isMfaRequired(step1)) {
+  const step2 = await api.completeMfa({
+    challenge: step1.challenge,
+    code: authenticatorCode // or backup code
+  });
+  // step2.data.token / step2.user — api.token is also set
+} else {
+  // step1.data.token / step1.user
+}
 ```
 
-### JavaScript (ES Modules)
+### Refresh
 
-```javascript
-import JXPHelper from 'jxp-helper';
-const apihelper = new JXPHelper({ 
-  server: "http://localhost:2001", 
-  apikey: "your-api-key" 
-});
+```typescript
+const renewed = await api.refresh(refreshToken);
 ```
 
 ## Configuration Options
 
 ```typescript
 interface JXPHelperOptions {
-  server: string;        // Required: The JXP server URL
-  apikey: string;        // Required: Your API key
-  debug?: boolean;       // Optional: Enable debug logging (default: false)
-  hideErrors?: boolean;  // Optional: Hide error messages (default: false)
+  server: string;   // Required
+  apikey?: string;  // X-API-Key
+  token?: string;   // Authorization: Bearer
+  debug?: boolean;
+  hideErrors?: boolean;
 }
 ```
 
-## Config
-
-### Config file
-
-Use [config](https://www.npmjs.com/package/config) and create `config/default.json` with your `jxp_server`.
-
-Eg. of `default.json`
-
-```json
-{
-    "jxp_server": "http://localhost:2001"
-}
-```
-
-### Pass in config
-
-When initialising the helper, just pass in `server` and `apikey`.
+## TypeScript
 
 ```typescript
-const apihelper = new JXPHelper({ 
-  server: "http://localhost:2001", 
-  apikey: "your-api-key" 
+import { JXPHelper } from 'jxp-helper';
+
+const api = new JXPHelper({
+  server: 'http://localhost:4001',
+  apikey: process.env.JXP_API_KEY!
 });
+
+const user = await api.getOne<User>('user', userId);
+const articles = await api.get<Article>('article', { limit: 10 });
 ```
 
-## TypeScript Support
+## Tests
 
-This package includes full TypeScript definitions and provides excellent IntelliSense support. All methods are properly typed with generics where appropriate:
-
-```typescript
-// Typed responses
-const user = await apihelper.getOne<User>('users', userId);
-const articles = await apihelper.get<Article>('articles', { limit: 10 });
-
-// Type-safe bulk operations
-await apihelper.bulk_post('users', userData);
+```bash
+npm test
+npm run test:coverage
 ```
+
+Uses Node's built-in test runner against a local mock HTTP server (no live JXP required).
+
+## Migration from v2
+
+See [MIGRATION.md](MIGRATION.md).
+
+## License
+
+MIT

@@ -1,7 +1,10 @@
 import {
   JXPHelperOptions,
   LoginResponse,
-  LoginData,
+  TokenPair,
+  MfaRequiredResponse,
+  LoginStepResult,
+  isMfaRequired,
   UserData,
   ApiResponse,
   BulkWriteOperation,
@@ -28,6 +31,8 @@ export class JXPHelper {
   /**
    * Creates a new instance of the JXP Helper class.
    * @param opts - The options for configuring the JXP Helper.
+   * Provide `apikey` and/or `token`. Credentials may be omitted when only calling
+   * unauthenticated auth endpoints (`login`, `completeMfa`, `refresh`).
    */
   constructor(opts: JXPHelperOptions) {
     const defaults: Partial<JXPHelperOptions> = {
@@ -37,7 +42,6 @@ export class JXPHelper {
     const config = Object.assign({}, defaults, opts);
     this.config(config);
     if (!this.server) throw new Error("parameter 'server' required");
-    if (!this.apikey && !this.token) throw new Error("parameter 'apikey' or 'token' required");
     this.api = this.server + "/api";
   }
 
@@ -52,20 +56,92 @@ export class JXPHelper {
       }
     }
   }
+
+  /** Prefer bearer access token for subsequent authenticated calls. */
+  useAccessToken(accessToken: string): this {
+    this.token = accessToken;
+    return this;
+  }
   
+  private _isPlainObject(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  private _isEmptyParam(value: unknown): boolean {
+    return value === null || value === undefined || value === '';
+  }
+
+  private _encodeParam(key: string, value: string | number | boolean): string {
+    return key + '=' + encodeURIComponent(String(value));
+  }
+
+  private _appendObjectEntries(
+    parts: string[],
+    prefix: string,
+    obj: Record<string, unknown>
+  ): void {
+    for (const sub of Object.keys(obj)) {
+      const value = obj[sub];
+      if (this._isEmptyParam(value)) continue;
+      if (this._isPlainObject(value) || Array.isArray(value)) continue;
+      parts.push(this._encodeParam(`${prefix}[${sub}]`, value as string | number | boolean));
+    }
+  }
+
   private _configParams(opts: QueryOptions = {}): string {
     const parts: string[] = [];
     for (const opt in opts) {
       if (['apikey', 'api_key', 'apiKey', 'x-api-key'].includes(opt.toLowerCase())) continue;
-      if (Array.isArray(opts[opt])) {
-        (opts[opt] as (string | number)[]).forEach(val => {
-          parts.push(opt + "=" + encodeURIComponent(val.toString()));
-        });
-      } else {
-        parts.push(opt + "=" + encodeURIComponent(opts[opt].toString()));
+      const value = opts[opt];
+      if (this._isEmptyParam(value)) continue;
+
+      // `filters` (plural) → expand into `filter[key]=value` (never send `filters=`).
+      if (opt === 'filters') {
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            if (this._isPlainObject(item)) this._appendObjectEntries(parts, 'filter', item);
+          }
+        } else if (this._isPlainObject(value)) {
+          this._appendObjectEntries(parts, 'filter', value);
+        }
+        continue;
       }
+
+      // `search: { q: '…' }` → full-text `search=…`; other objects → `search[field]=…`.
+      if (opt === 'search' && this._isPlainObject(value)) {
+        const keys = Object.keys(value);
+        if (keys.length === 1 && keys[0] === 'q') {
+          const q = value.q;
+          if (!this._isEmptyParam(q) && (typeof q === 'string' || typeof q === 'number' || typeof q === 'boolean')) {
+            const trimmed = String(q).trim();
+            if (trimmed) parts.push(this._encodeParam('search', trimmed));
+          }
+        } else {
+          this._appendObjectEntries(parts, 'search', value);
+        }
+        continue;
+      }
+
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (this._isEmptyParam(item)) continue;
+          if (this._isPlainObject(item)) {
+            this._appendObjectEntries(parts, opt, item);
+          } else if (!Array.isArray(item)) {
+            parts.push(this._encodeParam(opt, item as string | number | boolean));
+          }
+        }
+        continue;
+      }
+
+      if (this._isPlainObject(value)) {
+        this._appendObjectEntries(parts, opt, value);
+        continue;
+      }
+
+      parts.push(this._encodeParam(opt, value as string | number | boolean));
     }
-    return parts.join("&");
+    return parts.join('&');
   }
 
   private _randomString(): string {
@@ -89,25 +165,74 @@ export class JXPHelper {
     return jxpRequest<T>(url, this.apikey, this.token, options);
   }
 
+  private async _hydrateLogin(data: TokenPair): Promise<LoginResponse> {
+    this.token = data.token;
+    // Prefer bearer for the user fetch even if a system API key is also configured.
+    const user = await jxpRequest<UserData>(
+      `${this.api}/user/${data.user_id}`,
+      undefined,
+      data.token
+    );
+    return { data, user };
+  }
+
   url(type: string, opts?: QueryOptions, ep: string = "api"): string {
     const params = this._configParams(opts);
     return `${this.server}/${ep}/${type}${params ? `?${params}` : ''}`;
   }
 
   /**
-   * Logs in a user with the provided email and password.
-   * @param email - The user's email.
-   * @param password - The user's password.
-   * @returns A promise that resolves to an object containing the login data and user information, or rejects with an error object.
+   * Password login. May return an MFA challenge instead of tokens.
+   * On success, stores the access token on this helper for subsequent calls.
    */
-  async login(email: string, password: string): Promise<LoginResponse | any> {
-    try {
-      const data = await this._request<LoginData>(`${this.server}/login`, { method: 'POST', body: { email, password } });
-      const user = await this._request<UserData>(`${this.api}/user/${data.user_id}`);
-      return { data, user };
-    } catch (err: any) {
-      return err instanceof JXPError ? err.body : err;
+  async login(email: string, password: string): Promise<LoginResponse | MfaRequiredResponse> {
+    const data = await this._request<LoginStepResult>(`${this.server}/login`, {
+      method: 'POST',
+      body: { email, password }
+    });
+    if (isMfaRequired(data)) return data;
+    if (!data?.token || !data?.user_id) {
+      throw new Error('Login response missing token/user_id');
     }
+    return this._hydrateLogin(data);
+  }
+
+  /**
+   * Complete MFA after `login` returned `{ status: "mfa_required", challenge, methods }`.
+   */
+  async completeMfa(opts: {
+    challenge: string;
+    code: string;
+    method?: string;
+  }): Promise<LoginResponse> {
+    const data = await this._request<TokenPair>(`${this.server}/login/mfa`, {
+      method: 'POST',
+      body: {
+        method: opts.method || 'totp',
+        challenge: opts.challenge,
+        code: String(opts.code).trim().replace(/\s+/g, '')
+      }
+    });
+    if (!data?.token || !data?.user_id) {
+      throw new Error('MFA response missing token/user_id');
+    }
+    return this._hydrateLogin(data);
+  }
+
+  /**
+   * Exchange a refresh token for a new access / refresh pair.
+   */
+  async refresh(refreshToken: string): Promise<LoginResponse> {
+    const data = await jxpRequest<TokenPair>(
+      `${this.server}/refresh`,
+      undefined,
+      refreshToken,
+      { method: 'POST' }
+    );
+    if (!data?.token || !data?.user_id) {
+      throw new Error('Refresh response missing token/user_id');
+    }
+    return this._hydrateLogin(data);
   }
 
   /**
@@ -586,6 +711,22 @@ export class JXPHelper {
     try {
       return await this._request<T>(url, { method: 'POST', body: data });
     } catch (err: any) {
+      throw err;
+    }
+  }
+
+  /**
+   * Retrieves the groups for a user.
+   * @param user_id - The ID of the user.
+   * @returns A promise that resolves to the usergroup document (or `{ groups: [] }`).
+   * @throws If an error occurs during the request.
+   */
+  async groups_get(user_id: string): Promise<any> {
+    const url = `${this.server}/groups/${user_id}`;
+    try {
+      return await this._request(url);
+    } catch (err: any) {
+      this._displayError(err);
       throw err;
     }
   }
