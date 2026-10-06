@@ -1,6 +1,6 @@
 {
   "name": "jxp-helper",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "A bunch of helpful functions for talking to a JXP API server ",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

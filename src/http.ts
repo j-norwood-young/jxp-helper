@@ -4,6 +4,8 @@ export interface RequestOptions {
   method?: string;
   body?: unknown;
   signal?: AbortSignal;
+  /** Convenience: builds AbortSignal.timeout(ms) when `signal` is not set. */
+  timeoutMs?: number;
 }
 
 export async function jxpRequest<T>(
@@ -23,11 +25,19 @@ export async function jxpRequest<T>(
     body = JSON.stringify(options.body);
   }
 
+  const signal =
+    options.signal ??
+    AbortSignal.timeout(
+      typeof options.timeoutMs === 'number' && options.timeoutMs > 0
+        ? options.timeoutMs
+        : 30_000
+    );
+
   const response = await fetch(url, {
     method: options.method ?? 'GET',
     headers,
     body,
-    signal: options.signal ?? AbortSignal.timeout(30_000)
+    signal
   });
 
   const contentType = response.headers.get('content-type') ?? '';

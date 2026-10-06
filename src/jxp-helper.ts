@@ -161,7 +161,10 @@ export class JXPHelper {
     }
   }
 
-  private _request<T>(url: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
+  private _request<T>(
+    url: string,
+    options: { method?: string; body?: unknown; signal?: AbortSignal; timeoutMs?: number } = {}
+  ): Promise<T> {
     return jxpRequest<T>(url, this.apikey, this.token, options);
   }
 
@@ -704,12 +707,22 @@ export class JXPHelper {
    * @returns A promise that resolves to the response data.
    * @throws Throws an error if the request fails.
    */
-  async call<T = any>(type: string, cmd: string, data: any): Promise<T> {
+  async call<T = any>(
+    type: string,
+    cmd: string,
+    data: any,
+    opts?: { signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<T> {
     //Call a function in the model
     const url = `${this.server}/call/${type}/${cmd}`;
     if (this.debug) console.log("CALLing  ", url, data);
     try {
-      return await this._request<T>(url, { method: 'POST', body: data });
+      return await this._request<T>(url, {
+        method: 'POST',
+        body: data,
+        signal: opts?.signal,
+        timeoutMs: opts?.timeoutMs
+      });
     } catch (err: any) {
       throw err;
     }
